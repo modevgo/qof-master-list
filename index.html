@@ -171,7 +171,7 @@ footer{text-align:center;padding:24px;color:var(--text-light);font-size:.8rem;ma
     <div class="register-breakdown" id="registerBreakdown"></div>
     <h2 style="margin-top:24px">Master Patient List</h2>
     <div class="search-row">
-      <input type="text" id="searchInput" placeholder="Search by name or NHS number…">
+      <input type="text" id="searchInput" placeholder="Search by name, NHS number, or telephone…">
       <div class="multi-select" id="conditionFilter">
         <div class="multi-select-btn" id="condFilterBtn">Filter by condition ▾</div>
         <div class="multi-select-drop" id="condFilterDrop"></div>
@@ -187,6 +187,7 @@ footer{text-align:center;padding:24px;color:var(--text-light);font-size:.8rem;ma
             <th data-col="id">Patient ID <span class="sort-arrow"></span></th>
             <th data-col="name">Patient Name <span class="sort-arrow"></span></th>
             <th data-col="dob">DOB <span class="sort-arrow"></span></th>
+            <th data-col="tel">Telephone <span class="sort-arrow"></span></th>
             <th data-col="conditions">Known QoF Conditions</th>
             <th data-col="count" style="text-align:center">Count <span class="sort-arrow"></span></th>
           </tr>
@@ -253,10 +254,11 @@ const NAME_PATTERNS = {
   last:["surname","last name","lastname","last_name","family name"]
 };
 const DOB_PATTERNS = ["dob","date of birth","dateofbirth","birth date","birthdate","date_of_birth","birth_date"];
+const TEL_PATTERNS = ["telephone","phone","tel","mobile","contact number","phone number","telephone number","tel no","tel_no","phone_no","mobile number","cell"];
 
 // State
 let uploadedFiles = []; // {file, register, data:null, headers:[], rows:[]}
-let fileMappings = [];  // {fileIdx, idCol, idType, nameCol, nameCol2, dobCol, headers}
+let fileMappings = [];  // {fileIdx, idCol, idType, nameCol, dobCol, telCol, headers}
 let masterList = [];     // {id, idType, name, dob, conditions:Set, conditionCount}
 let filteredList = [];
 let currentPage = 1;
@@ -417,8 +419,12 @@ function buildMappings() {
     const fullNameCol=detectColumn(h,NAME_PATTERNS.full);
     const firstNameCol=detectColumn(h,NAME_PATTERNS.first);
     const lastNameCol=detectColumn(h,NAME_PATTERNS.last);
+    const nameCol=fullNameCol>=0?fullNameCol:firstNameCol;
+    const nameCol2=fullNameCol>=0?-1:lastNameCol;
+    // Combine first+last into single name col display
     const dobCol=detectColumn(h,DOB_PATTERNS);
-    return {fileIdx:i,idCol,idType,nameCol:fullNameCol>=0?fullNameCol:firstNameCol,nameCol2:fullNameCol>=0?-1:lastNameCol,dobCol,headers:h};
+    const telCol=detectColumn(h,TEL_PATTERNS);
+    return {fileIdx:i,idCol,idType,nameCol,nameCol2,dobCol,telCol,headers:h};
   });
 }
 
@@ -446,28 +452,28 @@ function renderMappings() {
         ${m.nameCol>=0?'<span class="detected">✓ detected</span>':''}
       </div>
       <div class="field-row">
-        <label>Name 2</label>
-        <select data-fi="${fi}" data-field="name2">${noneOpt}${opts}</select>
-        ${m.nameCol2>=0?'<span class="detected">✓ detected</span>':''}
-      </div>
-      <div class="field-row">
         <label>DOB</label>
         <select data-fi="${fi}" data-field="dob">${noneOpt}${opts}</select>
         ${m.dobCol>=0?'<span class="detected">✓ detected</span>':''}
+      </div>
+      <div class="field-row">
+        <label>Telephone</label>
+        <select data-fi="${fi}" data-field="tel">${noneOpt}${opts}</select>
+        ${m.telCol>=0?'<span class="detected">✓ detected</span>':''}
       </div>
     `;
     grid.appendChild(card);
     card.querySelector('[data-field="id"]').value=m.idCol;
     card.querySelector('[data-field="name"]').value=m.nameCol;
-    card.querySelector('[data-field="name2"]').value=m.nameCol2;
     card.querySelector('[data-field="dob"]').value=m.dobCol;
+    card.querySelector('[data-field="tel"]').value=m.telCol;
   });
   grid.querySelectorAll('select').forEach(sel=>sel.addEventListener('change',e=>{
     const fi=+e.target.dataset.fi, field=e.target.dataset.field, val=+e.target.value;
     if(field==='id') fileMappings[fi].idCol=val;
     else if(field==='name') fileMappings[fi].nameCol=val;
-    else if(field==='name2') fileMappings[fi].nameCol2=val;
     else if(field==='dob') fileMappings[fi].dobCol=val;
+    else if(field==='tel') fileMappings[fi].telCol=val;
   }));
 }
 
@@ -494,13 +500,15 @@ function processRegisters() {
         if(n2) name=name?(name+' '+n2):n2;
       }
       let dob=m.dobCol>=0?(row[h[m.dobCol]]||''):'';
+      let tel=m.telCol>=0?(row[h[m.telCol]]||''):'';
       if(patients.has(id)){
         const p=patients.get(id);
         p.conditions.add(register);
         if(!p.name&&name) p.name=name;
         if(!p.dob&&dob) p.dob=dob;
+        if(!p.tel&&tel) p.tel=tel;
       } else {
-        patients.set(id,{id:rawId.trim(),idNorm:id,name,dob,conditions:new Set([register])});
+        patients.set(id,{id:rawId.trim(),idNorm:id,name,dob,tel,conditions:new Set([register])});
       }
     });
   });
@@ -508,6 +516,7 @@ function processRegisters() {
     id:p.id,
     name:p.name,
     dob:p.dob,
+    tel:p.tel||'',
     conditions:Array.from(p.conditions).sort(),
     conditionCount:p.conditions.size
   }));
@@ -555,7 +564,7 @@ function renderDashboard() {
 function applyFiltersAndRender() {
   const q=$('#searchInput').value.toLowerCase().trim();
   filteredList=masterList.filter(p=>{
-    if(q&&!p.name.toLowerCase().includes(q)&&!normaliseId(p.id).includes(normaliseId(q))&&!p.id.toLowerCase().includes(q)) return false;
+    if(q&&!p.name.toLowerCase().includes(q)&&!normaliseId(p.id).includes(normaliseId(q))&&!p.id.toLowerCase().includes(q)&&!p.tel.toLowerCase().includes(q)) return false;
     if(activeConditionFilters.size){
       for(const c of activeConditionFilters) if(!p.conditions.includes(c)) return false;
     }
@@ -572,6 +581,7 @@ function sortList() {
     else if(sortCol==='id'){va=a.id;vb=b.id}
     else if(sortCol==='name'){va=a.name.toLowerCase();vb=b.name.toLowerCase()}
     else if(sortCol==='dob'){va=a.dob;vb=b.dob}
+    else if(sortCol==='tel'){va=a.tel;vb=b.tel}
     else return 0;
     if(va<vb) return -1*sortDir;
     if(va>vb) return 1*sortDir;
@@ -593,6 +603,7 @@ function renderTable() {
       <td>${esc(p.id)}</td>
       <td>${esc(p.name)}</td>
       <td>${esc(p.dob)}</td>
+      <td>${esc(p.tel)}</td>
       <td><div class="conditions-cell">${p.conditions.map(c=>`<span class="cond-tag">${esc(c)}</span>`).join('')}</div></td>
       <td style="text-align:center"><span class="count-badge ${badge}">${p.conditionCount}</span></td>
     </tr>`;
@@ -689,6 +700,7 @@ function getExportData(){
     "Patient ID":p.id,
     "Patient Name":p.name,
     "DOB":p.dob,
+    "Telephone":p.tel,
     "Known QoF Conditions":p.conditions.join(', '),
     "Condition Count":p.conditionCount
   }));
